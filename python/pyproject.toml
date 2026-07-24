@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "outcome-router"
+version = "0.1.0"
+description = "Instrumentation SDK and offline policy tooling for Outcome Router"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+outcome-router-train = "outcome_router.training:main"
+outcome-router-evaluate = "outcome_router.evaluation:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,380 @@
+openapi: 3.1.0
+info:
+  title: Outcome Router API
+  version: 0.1.0
+  description: Outcome-aware, OpenAI-compatible model routing and audit API.
+servers:
+  - url: http://localhost:8080
+security:
+  - routerKey: []
+paths:
+  /v1/chat/completions:
+    post:
+      summary: Route and proxy a chat completion
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: OpenAI-compatible response or event stream.
+          headers:
+            X-Outcome-Decision-ID:
+              schema: { type: string }
+            X-Outcome-Model:
+              schema: { type: string }
+            X-Outcome-Policy-Version:
+              schema: { type: string }
+            X-Outcome-Fallback-Reason:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "502":
+          $ref: "#/components/responses/Error"
+  /v1/outcomes:
+    post:
+      summary: Record a delayed step or workflow outcome
+      operationId: recordOutcome
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Outcome"
+      responses:
+        "202":
+          description: Outcome accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, accepted]
+                properties:
+                  id: { type: string }
+                  accepted: { type: boolean, const: true }
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/decisions/{decisionID}:
+    get:
+      summary: Read a reproducible routing decision
+      operationId: getDecision
+      parameters:
+        - name: decisionID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Full decision evidence.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Decision"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/audit/summary:
+    get:
+      summary: Summarize controlled cost and outcome evidence
+      operationId: getAuditSummary
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
+        - name: policy_id
+          in: query
+          schema: { type: string }
+        - name: primary_outcome
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cost, quality, allocation, and confidence summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditSummary"
+  /v1/policies:
+    get:
+      summary: List tenant policies
+      operationId: listPolicies
+      responses:
+        "200":
+          description: Versioned policy list.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Policy"
+    post:
+      summary: Create or replace a policy
+      operationId: putPolicy
+      security:
+        - adminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Policy"
+      responses:
+        "201":
+          description: Policy stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Policy"
+        "400":
+          $ref: "#/components/responses/Error"
+components:
+  securitySchemes:
+    routerKey:
+      type: http
+      scheme: bearer
+      description: Tenant-specific router API key.
+    adminKey:
+      type: http
+      scheme: bearer
+      description: Administrator key resolved from the configured environment variable.
+  responses:
+    Error:
+      description: OpenAI-compatible error envelope.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: object
+                required: [message, type, code]
+                properties:
+                  message: { type: string }
+                  type: { type: string }
+                  code: { type: string }
+  schemas:
+    ChatCompletionRequest:
+      type: object
+      required: [messages]
+      properties:
+        model:
+          type: string
+          default: auto
+        messages:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [role, content]
+            properties:
+              role: { type: string }
+              content: {}
+            additionalProperties: true
+        stream:
+          type: boolean
+          default: false
+        tools:
+          type: array
+          items: { type: object, additionalProperties: true }
+        response_format:
+          type: object
+          additionalProperties: true
+        routing:
+          $ref: "#/components/schemas/RoutingMetadata"
+      additionalProperties: true
+    RoutingMetadata:
+      type: object
+      required: [trace_id, workflow]
+      properties:
+        trace_id: { type: string }
+        workflow: { type: string }
+        step: { type: string, default: response }
+        risk_class:
+          type: string
+          enum: [low, normal, high, regulated]
+          default: normal
+        policy_id: { type: string }
+        deadline_ms: { type: integer, minimum: 1 }
+        required_region: { type: string }
+        required_privacy:
+          type: string
+          enum: [standard, zdr, local]
+        max_cost_usd: { type: number, minimum: 0 }
+      additionalProperties: false
+    Outcome:
+      type: object
+      required: [type, value]
+      anyOf:
+        - required: [decision_id]
+        - required: [trace_id]
+      properties:
+        decision_id: { type: string }
+        trace_id: { type: string }
+        type: { type: string }
+        value:
+          oneOf:
+            - { type: boolean }
+            - { type: number, minimum: 0, maximum: 1 }
+        occurred_at: { type: string, format: date-time }
+        metadata:
+          type: object
+          additionalProperties: true
+      additionalProperties: false
+    Prediction:
+      type: object
+      properties:
+        model_id: { type: string }
+        success: { type: number }
+        lower_bound: { type: number }
+        uncertainty: { type: number }
+        samples: { type: integer }
+        estimated_cost_usd: { type: number }
+        p95_latency_ms: { type: integer }
+        eligible: { type: boolean }
+        reason: { type: string }
+    Decision:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - trace_id
+        - policy_id
+        - policy_version
+        - incumbent_model
+        - selected_model
+        - bucket
+        - created_at
+      properties:
+        id: { type: string }
+        parent_decision_id: { type: string }
+        tenant_id: { type: string }
+        trace_id: { type: string }
+        workflow: { type: string }
+        step: { type: string }
+        risk_class: { type: string }
+        policy_id: { type: string }
+        policy_version: { type: string }
+        snapshot_version: { type: string }
+        catalog_version: { type: string }
+        incumbent_model: { type: string }
+        selected_model: { type: string }
+        final_model: { type: string }
+        bucket: { type: string }
+        fallback_reason: { type: string }
+        feasible_models:
+          type: array
+          items: { type: string }
+        predictions:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Prediction"
+        estimated_cost_usd: { type: number }
+        incumbent_estimated_cost_usd: { type: number }
+        actual_cost_usd: { type: number }
+        routing_latency_micros: { type: integer }
+        provider_latency_ms: { type: integer }
+        attempted_models:
+          type: array
+          items: { type: string }
+        upstream_status: { type: integer }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+      additionalProperties: true
+    Interval:
+      type: object
+      required: [estimate, lower, upper, n]
+      properties:
+        estimate: { type: number }
+        lower: { type: number }
+        upper: { type: number }
+        n: { type: integer }
+    AuditSummary:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        policy_id: { type: string }
+        since: { type: string, format: date-time }
+        requests: { type: integer }
+        routed_requests: { type: integer }
+        control_requests: { type: integer }
+        shadow_requests: { type: integer }
+        actual_cost_usd: { type: number }
+        incumbent_cost_usd: { type: number }
+        verified_gross_savings_usd: { type: number }
+        savings_percent: { type: number }
+        primary_outcome: { type: string }
+        treatment_outcome:
+          $ref: "#/components/schemas/Interval"
+        control_outcome:
+          $ref: "#/components/schemas/Interval"
+        non_inferiority_delta: { type: number }
+        by_model:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties: true
+        by_bucket:
+          type: object
+          additionalProperties: { type: integer }
+        generated_at: { type: string, format: date-time }
+    Policy:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - version
+        - mode
+        - incumbent_model
+        - candidate_models
+        - quality_tolerance
+        - confidence_z
+        - minimum_samples
+      properties:
+        id: { type: string }
+        tenant_id: { type: string }
+        version: { type: string }
+        mode:
+          type: string
+          enum: [observe, shadow, canary, active]
+        incumbent_model: { type: string }
+        candidate_models:
+          type: array
+          items: { type: string }
+        fallback_models:
+          type: array
+          items: { type: string }
+        quality_tolerance: { type: number, minimum: 0, maximum: 1 }
+        confidence_z: { type: number, exclusiveMinimum: 0 }
+        minimum_samples: { type: integer, minimum: 0 }
+        control_percent: { type: number, minimum: 0, maximum: 100 }
+        canary_percent: { type: number, minimum: 0, maximum: 100 }
+        exploration_percent: { type: number, minimum: 0, maximum: 3 }
+        shadow_budget_usd_per_day: { type: number, minimum: 0 }
+        primary_outcome: { type: string }
+        constraints:
+          type: object
+          additionalProperties: true
+        snapshot:
+          type: object
+          additionalProperties: true
+        drifted: { type: boolean }
+        created_at: { type: string, format: date-time }
+      additionalProperties: false
