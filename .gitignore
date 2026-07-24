@@ -1,0 +1,14 @@
+/data/
+/bin/
+/.coverage/
+/python/.venv/
+/python/**/__pycache__/
+/python/**/*.pyc
+/dashboard/.env
+/dashboard/.env.local
+/dashboard/.wrangler/
+/dashboard/.next/
+/dashboard/dist/
+/dashboard/node_modules/
+/audit-output/
+.DS_Store

@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: outcome_router
+      POSTGRES_USER: router
+      POSTGRES_PASSWORD: router-local-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U router -d outcome_router"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    volumes:
+      - outcome-router-postgres:/var/lib/postgresql/data
+      - ./db/migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
+
+  mock-provider:
+    build: .
+    command: ["mock-provider"]
+    environment:
+      MOCK_PROVIDER_ADDRESS: ":8091"
+    expose:
+      - "8091"
+
+  router:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-provider:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://router:router-local-only@postgres:5432/outcome_router?sslmode=disable
+      MOCK_PROVIDER_URL: http://mock-provider:8091/v1/chat/completions
+      OUTCOME_ROUTER_CONFIG: /app/config/demo.json
+    ports:
+      - "8080:8080"
+
+volumes:
+  outcome-router-postgres:
